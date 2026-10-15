@@ -1,0 +1,131 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CraDocs - S3 bucket, DynamoDB tables, expiry Lambda + schedule, EC2 instance role
+
+Resources:
+  DocsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub cradocs-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: cradocs-users
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{ AttributeName: username, AttributeType: S }]
+      KeySchema: [{ AttributeName: username, KeyType: HASH }]
+
+  DocsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: cradocs-docs
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{ AttributeName: doc_id, AttributeType: S }]
+      KeySchema: [{ AttributeName: doc_id, KeyType: HASH }]
+
+  # Role for the EC2 web server (attach via the instance profile below)
+  AppRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - { Effect: Allow, Principal: { Service: ec2.amazonaws.com }, Action: 'sts:AssumeRole' }
+      Policies:
+        - PolicyName: cradocs-app
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource: !Sub '${DocsBucket.Arn}/*'
+              - Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:Scan]
+                Resource: [!GetAtt UsersTable.Arn, !GetAtt DocsTable.Arn]
+
+  AppInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref AppRole]
+
+  CleanupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - { Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: 'sts:AssumeRole' }
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: cradocs-cleanup
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:DeleteObject]
+                Resource: !Sub '${DocsBucket.Arn}/*'
+              - Effect: Allow
+                Action: [dynamodb:Scan, dynamodb:DeleteItem]
+                Resource: !GetAtt DocsTable.Arn
+
+  CleanupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: cradocs-cleanup
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 60
+      Role: !GetAtt CleanupRole.Arn
+      Environment:
+        Variables:
+          BUCKET: !Ref DocsBucket
+          DOCS_TABLE: !Ref DocsTable
+      Code:
+        ZipFile: |
+          import os, time, boto3
+          table = boto3.resource("dynamodb").Table(os.environ["DOCS_TABLE"])
+          s3 = boto3.client("s3")
+
+          def handler(event, context):
+              now, deleted, kwargs = int(time.time()), 0, {}
+              while True:
+                  resp = table.scan(**kwargs)
+                  for d in resp["Items"]:
+                      exp = d.get("expires_at")
+                      if d.get("permanent") or exp is None or int(exp) > now:
+                          continue
+                      s3.delete_object(Bucket=os.environ["BUCKET"], Key=d["doc_id"])
+                      table.delete_item(Key={"doc_id": d["doc_id"]})
+                      deleted += 1
+                  if "LastEvaluatedKey" not in resp:
+                      return {"deleted": deleted}
+                  kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+
+  CleanupSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      ScheduleExpression: rate(5 minutes)
+      State: ENABLED
+      Targets:
+        - { Arn: !GetAtt CleanupFunction.Arn, Id: cleanup }
+
+  CleanupPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CleanupFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt CleanupSchedule.Arn
+
+Outputs:
+  BucketName: { Value: !Ref DocsBucket, Description: Use as CRADOCS_BUCKET }
+  InstanceProfile: { Value: !Ref AppInstanceProfile, Description: Attach to the EC2 instance }
