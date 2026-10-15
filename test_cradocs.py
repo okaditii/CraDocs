@@ -32,9 +32,12 @@ def new_client(name):
 
 
 def upload(c, **fields):
+    before = {d["doc_id"] for d in cra.store.list_docs()}
     data = {"file": (io.BytesIO(b"data"), "f.txt"), "amount": "1", "unit": "hours", **fields}
     post(c, "/upload", data, content_type="multipart/form-data")
-    return cra.store.list_docs()[-1]  # LocalStore keeps insertion order
+    new = [d for d in cra.store.list_docs() if d["doc_id"] not in before]
+    assert len(new) == 1, "upload should create exactly one document"
+    return new[0]
 
 
 class VaultTests(unittest.TestCase):
@@ -95,6 +98,23 @@ class VaultTests(unittest.TestCase):
         self.assertIsNone(doc["pw_hash"])
         post(owner, f"/manage/{doc['doc_id']}", {"action": "save", "amount": "3", "unit": "hours", "max_dl": "0"})
         self.assertAlmostEqual(cra.store.get_doc(doc["doc_id"])["expires_at"], now + 10800, delta=5)
+
+    def test_access_start_time_respects_browser_timezone(self):
+        import calendar
+        owner = new_client("own8")
+        # 10:00 local in IST (getTimezoneOffset() == -330) is 04:30 UTC
+        doc = upload(owner, starts="2030-01-01T10:00", tzoffset="-330")
+        self.assertEqual(doc["starts_at"], calendar.timegm((2030, 1, 1, 4, 30, 0)))
+        bob = new_client("bob8")
+        post(owner, f"/manage/{doc['doc_id']}", {"action": "save", "allowed": "bob8", "max_dl": "0"})
+        self.assertEqual(bob.get(f"/download/{doc['doc_id']}").status_code, 302)  # not started yet
+
+    def test_oversize_upload_is_rejected_cleanly(self):
+        owner = new_client("own9")
+        big = io.BytesIO(b"x" * (11 * 1024 * 1024))
+        r = post(owner, "/upload", {"file": (big, "big.bin"), "amount": "1", "unit": "hours"},
+                 content_type="multipart/form-data")
+        self.assertEqual(r.status_code, 302)
 
     def test_home_page_renders(self):
         owner = new_client("own7")

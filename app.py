@@ -1,7 +1,8 @@
 import os
 import time
 import uuid
-from datetime import datetime
+import calendar
+from datetime import datetime, timezone
 
 
 def _load_dotenv(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")):
@@ -36,6 +37,19 @@ app.config.update(
 )
 store = get_store()
 
+if os.environ.get("TRUST_PROXY") == "1":  # running behind nginx/Caddy/ALB
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+if os.environ.get("HTTPS_ONLY") == "1":
+    app.config["SESSION_COOKIE_SECURE"] = True
+
+
+@app.errorhandler(413)
+def too_large(_e):
+    flash("That file is over the 10 MB limit.")
+    return redirect(url_for("index"))
+
+
 # Google sign-in is enabled only when both env vars are set.
 GOOGLE_ENABLED = bool(os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET"))
 oauth = OAuth(app)
@@ -57,23 +71,23 @@ LAYOUT = """
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CraDocs</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root{--bg:#faf7ff;--ink:#2b1b4d;--mute:#6b5f8a;--pur:#7c3aed;--pur-d:#5b21b6;--pur-l:#f1eaff;--pur-m:#cdbcfb;
 --yel:#ffc400;--yel-l:#fff6cc;--yel-m:#ffe066;--red:#dc2626;--pink:#ec4899;--cyan:#06b6d4;--org:#f59e0b;--grn:#16a34a;
---px:'Press Start 2P',ui-monospace,monospace;--body:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif}
+--px:'Fredoka','Inter',system-ui,sans-serif;--body:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
 ::selection{background:var(--yel);color:var(--ink)}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.5;min-height:100vh}
-h1,h2,h3,.px{font-family:var(--px);font-weight:400;letter-spacing:0;line-height:1.6}
+h1,h2,h3,.px{font-family:var(--px);font-weight:600;letter-spacing:0;line-height:1.25}
 button,input,select{font-family:inherit}
 a{color:var(--pur-d)}
 :focus-visible{outline:3px solid var(--yel);outline-offset:2px}
 /* header */
 .top{position:sticky;top:0;z-index:20;background:#fff;border-bottom:4px solid var(--pur);box-shadow:0 4px 0 var(--yel);
  display:flex;align-items:center;gap:14px;padding:10px 18px}
-.brand{display:flex;align-items:center;gap:12px;text-decoration:none;color:var(--pur-d);font-family:var(--px);font-size:14px}
+.brand{display:flex;align-items:center;gap:12px;text-decoration:none;color:var(--pur-d);font-family:var(--px);font-weight:600;font-size:26px}
 .logo{width:36px;height:36px}
 .jaw-t,.jaw-b{transform-box:view-box;transform-origin:16px 16px}
 .brand:hover .jaw-t{animation:chomp-t .4s steps(2,end) infinite alternate}.brand:hover .jaw-b{animation:chomp-b .4s steps(2,end) infinite alternate}
@@ -82,7 +96,7 @@ a{color:var(--pur-d)}
 .search input{width:100%;background:var(--pur-l);color:var(--ink);border:2px solid transparent;border-radius:8px;padding:10px 14px;font-size:15px;outline:0}
 .search input:focus{background:#fff;border-color:var(--pur)}
 .spacer{flex:1}
-.avatar{width:38px;height:38px;border:3px solid var(--ink);border-radius:8px;background:var(--yel);color:var(--ink);font-family:var(--px);font-size:12px;cursor:pointer;
+.avatar{width:38px;height:38px;border:3px solid var(--ink);border-radius:8px;background:var(--yel);color:var(--ink);font-family:var(--px);font-weight:600;font-size:18px;cursor:pointer;
  box-shadow:3px 3px 0 var(--ink)}
 .avatar:hover{background:var(--yel-m)}
 .menu{position:absolute;right:0;top:48px;background:#fff;color:var(--ink);border:3px solid var(--ink);border-radius:8px;min-width:210px;display:none;z-index:30;
@@ -94,7 +108,7 @@ a{color:var(--pur-d)}
 /* start strip */
 .start{background:var(--yel-l);border-bottom:4px solid var(--pur);padding:24px 0 8px}
 .wrap{max-width:1040px;margin:0 auto;padding:0 18px}
-.start h2{font-size:12px;margin:0 0 6px;color:var(--ink)}
+.start h2{font-size:24px;margin:0 0 6px;color:var(--ink)}
 .hint{color:var(--mute);font-size:14px}
 .tiles{display:flex;gap:18px;flex-wrap:wrap;margin-top:18px;padding-bottom:22px}
 .tile{width:200px;background:#fff;border:3px solid var(--ink);border-top:10px solid var(--yel);border-radius:10px;color:var(--ink);cursor:pointer;padding:14px;text-align:left;
@@ -103,11 +117,11 @@ a{color:var(--pur-d)}
 .tile:active{transform:translate(2px,2px);box-shadow:2px 2px 0 var(--pur)}
 .tile .ico{height:70px;display:grid;place-items:center;font-family:var(--px);font-size:40px;color:var(--pur)}
 .tile .ico svg{width:58px;height:58px}
-.tile-name{font-family:var(--px);font-size:10px;margin-top:10px;line-height:1.7}.tile-sub{font-size:14px;color:var(--mute);margin-top:2px}
+.tile-name{font-family:var(--px);font-weight:600;font-size:18px;margin-top:10px;line-height:1.25}.tile-sub{font-size:14px;color:var(--mute);margin-top:2px}
 /* recent */
 .recent{padding-top:28px;padding-bottom:80px}
 .recent-head{display:flex;align-items:center;gap:14px;margin-bottom:20px;flex-wrap:wrap}
-.recent-head h2{flex:0 1 auto;margin:0 auto 0 0;font-size:12px;color:var(--ink);background:linear-gradient(transparent 62%,var(--yel) 62%);padding:0 4px}
+.recent-head h2{flex:0 1 auto;margin:0 auto 0 0;font-size:24px;color:var(--ink);background:linear-gradient(transparent 62%,var(--yel) 62%);padding:0 4px}
 .score{font-size:14px;color:var(--mute)}
 select{background:#fff;color:var(--ink);border:2px solid var(--pur-m);border-radius:8px;padding:8px 10px;font-size:14px;cursor:pointer}
 .icon-btn{background:#fff;color:var(--pur-d);border:2px solid var(--pur-m);border-radius:8px;width:40px;height:40px;font-size:16px;cursor:pointer}
@@ -119,14 +133,14 @@ select{background:#fff;color:var(--ink);border:2px solid var(--pur-m);border-rad
 .thumb{display:grid;place-items:center;height:140px;border-bottom:3px solid var(--ink);position:relative;text-decoration:none;color:inherit;
  background:radial-gradient(circle,#cdbcfb99 2px,transparent 2.6px) 0 0/20px 20px,var(--pur-l)}
 .thumb svg{width:76px;height:76px;filter:drop-shadow(3px 3px 0 #2b1b4d26)}
-.badge{position:absolute;left:10px;top:10px;background:var(--yel);color:var(--ink);font-family:var(--px);font-size:8px;padding:5px 6px;border:2px solid var(--ink)}
+.badge{position:absolute;left:10px;top:10px;background:var(--yel);color:var(--ink);font-family:var(--px);font-weight:600;font-size:12px;padding:3px 8px;border:2px solid var(--ink);border-radius:6px}
 .badge.lock{left:auto;right:10px;background:var(--pur-d);color:#fff;border-color:var(--pur-d)}
 .meta{padding:12px 14px 14px;position:relative}
-.title{font-family:var(--px);font-size:10px;line-height:1.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:36px}
+.title{font-family:var(--px);font-weight:600;font-size:17px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:36px}
 .owner{font-size:14px;color:var(--mute);margin:4px 0 10px}
 .dots{position:absolute;right:8px;top:8px;width:34px;height:34px;font-size:18px}
 .hp{display:grid;grid-template-columns:auto 1fr;gap:4px 8px;align-items:center}
-.hp-label{font-family:var(--px);font-size:8px;color:var(--pur-d)}
+.hp-label{font-family:var(--px);font-weight:600;font-size:13px;color:var(--pur-d)}
 .hp-bar{height:12px;background:var(--pur-l);border:2px solid var(--ink);border-radius:7px;overflow:hidden}
 .hp-fill{height:100%;width:100%;transition:width 1s linear}
 .hp-fill.ok{background:var(--grn)}.hp-fill.mid{background:var(--yel)}.hp-fill.low{background:var(--red)}
@@ -194,7 +208,7 @@ dialog::backdrop{background:rgba(43,27,77,.55)}
 dialog[open]{animation:pop .15s ease-out}
 @keyframes pop{from{transform:scale(.96);opacity:0}}
 .dlg{padding:26px;max-height:90vh;overflow:auto}
-.dbox h2{margin:0 0 16px;font-size:13px;color:var(--ink);background:linear-gradient(transparent 62%,var(--yel) 62%);display:inline-block;padding:0 4px}
+.dbox h2{margin:0 0 16px;font-size:24px;color:var(--ink);background:linear-gradient(transparent 62%,var(--yel) 62%);display:inline-block;padding:0 4px}
 label.l{display:block;font-size:13px;font-weight:600;color:var(--mute);margin:16px 0 5px}
 .in{width:100%;padding:9px 11px;border:2px solid var(--ink);border-radius:6px;font-size:15px;background:#fff;color:var(--ink)}
 .in:focus{outline:3px solid var(--yel);border-color:var(--pur)}
@@ -208,7 +222,7 @@ label.l{display:block;font-size:13px;font-weight:600;color:var(--mute);margin:16
 .sw{display:flex;align-items:center;gap:10px;margin-top:14px;cursor:pointer;font-size:15px}
 .sw input{width:20px;height:20px;accent-color:var(--pur)}
 .actions{display:flex;justify-content:flex-end;gap:12px;margin-top:24px;flex-wrap:wrap}
-.btn{border:3px solid var(--ink);border-radius:8px;background:var(--yel);color:var(--ink);font-family:var(--px);font-size:10px;padding:12px 16px;cursor:pointer;
+.btn{border:3px solid var(--ink);border-radius:8px;background:var(--yel);color:var(--ink);font-family:var(--px);font-weight:600;font-size:16px;padding:10px 18px;cursor:pointer;
  text-decoration:none;display:inline-block;box-shadow:3px 3px 0 var(--ink);transition:transform .08s}
 .btn:hover{background:var(--yel-m);transform:translate(-1px,-1px)}
 .btn:active{transform:translate(3px,3px);box-shadow:0 0 0 var(--ink)}
@@ -218,11 +232,11 @@ label.l{display:block;font-size:13px;font-weight:600;color:var(--mute);margin:16
 .stack{width:min(480px,100%)}
 .box{padding:28px 30px}.box.wide{width:min(660px,100%)}
 .title-screen{text-align:center;margin-bottom:24px}
-.title-screen h1{font-size:clamp(24px,5.5vw,40px);color:var(--pur);margin:10px 0;text-shadow:4px 4px 0 var(--yel)}
+.title-screen h1{font-size:clamp(36px,7vw,60px);color:var(--pur);margin:10px 0;text-shadow:4px 4px 0 var(--yel)}
 .marquee{height:38px;margin:4px 0;display:flex;justify-content:center}
 .marquee .chase{display:flex;gap:12px}
 .marquee svg{width:36px;height:36px}
-.press{font-family:var(--px);font-size:10px;color:var(--mute)}
+.press{font-family:var(--px);font-weight:500;font-size:16px;color:var(--mute)}
 .gbtn{display:flex;align-items:center;justify-content:center;gap:12px;border:3px solid var(--ink);border-radius:8px;padding:11px;color:var(--ink);text-decoration:none;
  font-weight:600;font-size:15px;background:#fff;box-shadow:3px 3px 0 var(--ink);margin-top:16px}
 .gbtn:hover{background:var(--yel-l)}.gbtn:active{transform:translate(3px,3px);box-shadow:none}
@@ -238,7 +252,39 @@ label.l{display:block;font-size:13px;font-weight:600;color:var(--mute);margin:16
 @keyframes out{to{opacity:0;transform:translate(-50%,16px)}}
 #confetti{position:fixed;inset:0;pointer-events:none;z-index:99}
 @media(max-width:640px){.row{flex-direction:column}.brand span{display:none}}
-</style></style></head><body>
+</style>/* BOLD: heavier type, solid color blocks, thick borders, hard shadows */
+body{font-weight:500;font-size:17px}
+.top{background:var(--pur);border-bottom:5px solid var(--ink);box-shadow:0 5px 0 var(--yel)}
+.brand{color:#fff;font-size:30px}
+.search input{background:#fff;border:3px solid var(--ink);font-weight:500}
+.avatar{box-shadow:4px 4px 0 var(--ink);font-size:20px;width:42px;height:42px}
+.start{background:var(--yel);border-bottom:5px solid var(--ink)}
+.start h2{font-size:36px;color:var(--ink)}
+.hint{color:var(--ink);font-weight:600;font-size:16px}
+.lane{background:radial-gradient(circle,var(--ink) 3px,transparent 3.5px) 0 50%/28px 26px repeat-x}
+.runner:before{background:var(--yel)}
+.tile{border-width:4px;border-top-width:14px;box-shadow:7px 7px 0 var(--ink)}
+.tile:hover{box-shadow:11px 11px 0 var(--pur)}
+.tile-name{font-size:22px}.tile-sub{font-weight:600;color:var(--pur-d)}
+.recent-head h2{font-size:34px}
+.card{border-width:4px;border-top-width:14px;box-shadow:7px 7px 0 var(--ink)}
+.card:hover{box-shadow:11px 11px 0 var(--pur)}
+.thumb{height:156px;border-bottom-width:4px}.thumb svg{width:92px;height:92px}
+.title{font-size:20px}
+.badge{font-size:13px;border-width:3px;font-weight:700}
+.hp-bar{height:17px;border-width:3px}.hp-label{font-size:15px;font-weight:700}.hp-text{font-weight:700;font-size:14px}
+.btn{font-size:18px;font-weight:700;padding:12px 24px;border-width:4px;box-shadow:0 5px 0 var(--ink)}
+.dbox{border-width:4px;box-shadow:10px 10px 0 var(--pur)}
+.dbox h2{font-size:32px}
+label.l{color:var(--ink);font-weight:700;font-size:14px}
+.in{border-width:3px;font-weight:500}
+.pill{border-width:3px;font-weight:600}
+.title-screen h1{font-size:clamp(46px,10vw,84px);color:var(--pur);text-shadow:5px 5px 0 var(--yel),10px 10px 0 var(--ink)}
+.press{color:var(--ink);font-weight:600}
+.snack{border-left-width:14px;font-weight:600;font-size:16px}
+.gbtn{border-width:4px;font-size:16px;font-weight:700;box-shadow:0 5px 0 var(--ink)}
+.menu a,.menu button{font-weight:600}
+</style></head><body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
  <symbol id="s-pac" viewBox="0 0 32 32"><path d="M16 16 L29 7 A16 16 0 1 0 29 25 Z" fill="#ffc400" stroke="#2b1b4d" stroke-width="1.5"/><circle cx="17" cy="8" r="2.4" fill="#000"/></symbol>
  <symbol id="s-ghost" viewBox="0 0 32 32"><path d="M3 30 V15 A13 13 0 0 1 29 15 V30 L24.7 25.5 L20.3 30 L16 25.5 L11.7 30 L7.3 25.5 Z" fill="currentColor"/>
@@ -365,6 +411,7 @@ HOME = """
 </section>
 
 <dialog id="up"><form class="dlg dbox" method="post" action="/upload" enctype="multipart/form-data">{{ csrf }}
+ <input type="hidden" name="tzoffset" id="tzoffset" value="0">
  <h2>Upload a document</h2>
  <label class="drop" id="drop"><input type="file" name="file" id="file" required hidden onchange="picked()">
   <svg viewBox="0 0 32 32"><use href="#s-up"/></svg><br><span id="dropt">Drop a file here or click to browse (max 10 MB)</span></label>
@@ -406,6 +453,7 @@ function foreverToggle(){const f=document.getElementById('forever').checked;
  document.getElementById('amount').disabled=f;document.getElementById('unit').disabled=f}
 document.querySelectorAll('#chips .pill').forEach(p=>p.onclick=()=>{amount.value=p.dataset.a;unit.value=p.dataset.u;forever.checked=false;foreverToggle();setPill(p.dataset.a,p.dataset.u)});
 function openUpload(t){const f=!!t.dataset.forever;forever.checked=f;
+ document.getElementById('tzoffset').value=new Date().getTimezoneOffset();
  if(!f){amount.value=t.dataset.amount;unit.value=t.dataset.unit;setPill(t.dataset.amount,t.dataset.unit)}
  foreverToggle();up.showModal()}
 function picked(){const f=document.getElementById('file').files[0];if(f)document.getElementById('dropt').textContent='Ready: '+f.name}
@@ -497,7 +545,7 @@ PASSWORD = """
 
 # ---------------------------------------------------------------- helpers --
 def fmt(ts):
-    return datetime.fromtimestamp(ts).strftime("%d %b %Y, %H:%M") if ts else "Never"
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%d %b %Y, %H:%M UTC") if ts else "Never"
 
 
 def ftype(name):
@@ -681,7 +729,13 @@ def upload():
     now = int(time.time())
     try:
         starts = request.form.get("starts")
-        starts_at = int(datetime.fromisoformat(starts).timestamp()) if starts else now
+        if starts:
+            # The browser sends its UTC offset (JS getTimezoneOffset, minutes), so the
+            # entered local time is interpreted correctly even when the server is in UTC.
+            offset = int(request.form.get("tzoffset") or 0)
+            starts_at = calendar.timegm(datetime.fromisoformat(starts).timetuple()) + offset * 60
+        else:
+            starts_at = now
         duration = parse_duration(request.form)
         max_dl = max(0, int(request.form.get("max_dl") or 0))
     except (ValueError, KeyError):
