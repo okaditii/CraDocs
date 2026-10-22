@@ -83,7 +83,7 @@ class LocalStore:
     def local_path(self, key):
         return self.root / "files" / key
 
-    def download_url(self, key, filename):
+    def download_url(self, key, filename, inline=False, content_type=None):
         return None  # app serves the file directly
 
 
@@ -173,14 +173,17 @@ class AwsStore:
     def local_path(self, key):
         return None
 
-    def download_url(self, key, filename):
+    def download_url(self, key, filename, inline=False, content_type=None):
+        params = {
+            "Bucket": self.bucket,
+            "Key": key,
+            "ResponseContentDisposition": f'{"inline" if inline else "attachment"}; filename="{filename}"',
+        }
+        if content_type:
+            params["ResponseContentType"] = content_type
         return self.s3.generate_presigned_url(
             "get_object",
-            Params={
-                "Bucket": self.bucket,
-                "Key": key,
-                "ResponseContentDisposition": f'attachment; filename="{filename}"',
-            },
+            Params=params,
             ExpiresIn=60,  # short-lived so revoked access can't be reused
         )
 

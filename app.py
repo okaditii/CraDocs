@@ -3,6 +3,8 @@ import threading
 import time
 import uuid
 import calendar
+import mimetypes
+import re
 from datetime import datetime, timezone
 
 
@@ -71,13 +73,20 @@ if os.environ.get("CRADOCS_SWEEP", "1") == "1":
     threading.Thread(target=_sweep_forever, daemon=True).start()
 
 UNITS = {"minutes": 60, "hours": 3600, "days": 86400, "weeks": 604800}
+MAX_LIFETIME = 10 * 365 * 86400  # anything longer should just be "keep forever"
+USERNAME_RE = re.compile(r"^[a-z0-9._@+-]{3,64}$")
+MIN_PASSWORD = 8
+MAX_FAILS, LOCK_SECONDS = 5, 300  # wrong passwords allowed before a 5 minute lockout
+# Compared against when the username doesn't exist, so a failed login takes the
+# same time either way and doesn't reveal which accounts exist.
+_DUMMY_HASH = generate_password_hash("not-a-real-password")
 GHOSTS = ["#7c3aed", "#ec4899", "#06b6d4", "#f59e0b", "#10b981", "#ef4444"]
 
 # ----------------------------------------------------------------- layout --
 LAYOUT = """
 <!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>CraDocs</title>
+<title>{% if page_title %}{{ page_title }} · {% endif %}CraDocs</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -287,6 +296,21 @@ label.l{color:var(--ink);font-weight:700;font-size:14px}
 .press{color:var(--ink);font-weight:600}
 .snack{border-left-width:14px;font-weight:600;font-size:16px}
 .menu a,.menu button{font-weight:600}
+.back{font-family:var(--px);font-weight:700;font-size:16px;color:var(--ink);background:var(--yel);border:3px solid var(--ink);border-radius:8px;padding:6px 14px;
+ text-decoration:none;box-shadow:3px 3px 0 var(--ink);white-space:nowrap}
+.back:hover{background:var(--yel-m)}.back:active{transform:translate(3px,3px);box-shadow:0 0 0 var(--ink)}
+.fname{font-size:13px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+/* preview */
+.viewer{padding-top:28px;padding-bottom:60px}
+.view-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}
+.view-head h2{margin:0;font-size:32px;word-break:break-word}
+.view-head .actions{margin-top:0}
+.stage{padding:14px;display:grid;place-items:center;min-height:320px}
+.stage img{max-width:100%;max-height:75vh;display:block}
+.stage iframe{width:100%;height:78vh;border:0;background:#fff}
+.stage video{max-width:100%;max-height:75vh}
+.stage audio{width:100%}
+.stage .empty{padding:40px 0}
 </style></head><body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
  <symbol id="s-pac" viewBox="0 0 32 32"><path d="M16 16 L29 7 A16 16 0 1 0 29 25 Z" fill="#ffc400" stroke="#2b1b4d" stroke-width="1.5"/><circle cx="17" cy="8" r="2.4" fill="#000"/></symbol>
@@ -304,11 +328,16 @@ label.l{color:var(--ink);font-weight:700;font-size:14px}
   <svg class="logo" viewBox="0 0 32 32"><path class="jaw-t" d="M0 16 A16 16 0 0 1 32 16 Z" fill="#ffc400" stroke="#2b1b4d" stroke-width="1.5"/><path class="jaw-b" d="M0 16 A16 16 0 0 0 32 16 Z" fill="#ffc400" stroke="#2b1b4d" stroke-width="1.5"/><circle cx="18" cy="8" r="2.2" fill="#000"/></svg>
   <span>CRADOCS</span></a>
  {% if session.user %}
+ {% if request.endpoint == 'index' %}
  <div class="search"><input id="q" type="search" placeholder="Search documents" oninput="applyFilter()" autocomplete="off"></div>
+ {% else %}
+ <a class="back" href="/">&larr; Back</a>
+ {% endif %}
  <span class="spacer"></span>
  <div style="position:relative">
   <button class="avatar" onclick="toggleMenu(event,'acct')" title="{{ session.user }}">{{ session.user[0]|upper }}</button>
-  <div class="menu" id="acct"><div class="who">{{ session.user }}</div><a href="/">Home</a><a href="/logout">Sign out</a></div>
+  <div class="menu" id="acct"><div class="who">{{ session.user }}</div><a href="/">Home</a>
+   <form method="post" action="/logout">{{ csrf }}<button>Sign out</button></form></div>
  </div>
  {% endif %}
 </header>
@@ -389,18 +418,20 @@ HOME = """
  {% if docs %}
  <div class="grid" id="grid">
  {% for d in docs %}
-  <div class="card" data-name="{{ d.filename|lower }}" data-owner="{{ 'me' if d.owner == user else 'other' }}" style="animation-delay:{{ loop.index0 * 60 }}ms">
-   <a class="thumb" href="/download/{{ d.doc_id }}" title="Download">
+  <div class="card" data-name="{{ (dtitle(d) ~ ' ' ~ d.filename)|lower }}" data-owner="{{ 'me' if d.owner == user else 'other' }}" style="animation-delay:{{ loop.index0 * 60 }}ms">
+   <a class="thumb" href="/view/{{ d.doc_id }}" title="Preview">
     <span class="badge">{{ ftype(d.filename) }}</span>
     {% if d.pw_hash %}<span class="badge lock">LOCKED</span>{% endif %}
     <svg viewBox="0 0 32 32" style="color:{{ ghost(d.doc_id) }}"><use href="#s-ghost"/></svg></a>
    <div class="meta">
-    <div class="title" title="{{ d.filename }}">{{ d.filename }}</div>
+    <div class="title" title="{{ dtitle(d) }}">{{ dtitle(d) }}</div>
+    {% if d.title and d.title != d.filename %}<div class="fname" title="{{ d.filename }}">{{ d.filename }}</div>{% endif %}
     <div class="owner">Owner: {{ 'you' if d.owner == user else d.owner }}</div>
     <div class="hp" data-start="{{ d.starts_at or d.created_at or 0 }}" data-exp="{{ d.expires_at or 0 }}">
      <span class="hp-label">TIME</span><div class="hp-bar"><div class="hp-fill"></div></div><div class="hp-text"></div></div>
     <button class="icon-btn dots" onclick="toggleMenu(event,'m{{ loop.index }}')">&#8942;</button>
     <div class="menu" id="m{{ loop.index }}" style="right:8px;top:44px">
+     <a href="/view/{{ d.doc_id }}">Preview</a>
      <a href="/download/{{ d.doc_id }}">Download</a>
      {% if d.owner == user %}<a href="/manage/{{ d.doc_id }}">Share and settings</a>{% endif %}
     </div>
@@ -420,6 +451,8 @@ HOME = """
  <h2>Upload a document</h2>
  <label class="drop" id="drop"><input type="file" name="file" id="file" required hidden onchange="picked()">
   <svg viewBox="0 0 32 32"><use href="#s-up"/></svg><br><span id="dropt">Drop a file here or click to browse (max 10 MB)</span></label>
+ <label class="l">Title (optional, defaults to the file name)</label>
+ <input class="in" name="title" id="dtitle" maxlength="120" placeholder="e.g. Passport scan">
 
  <label class="l">How long should it live?</label>
  <div class="chips" id="chips">
@@ -461,7 +494,8 @@ function openUpload(t){const f=!!t.dataset.forever;forever.checked=f;
  document.getElementById('tzoffset').value=new Date().getTimezoneOffset();
  if(!f){amount.value=t.dataset.amount;unit.value=t.dataset.unit;setPill(t.dataset.amount,t.dataset.unit)}
  foreverToggle();up.showModal()}
-function picked(){const f=document.getElementById('file').files[0];if(f)document.getElementById('dropt').textContent='Ready: '+f.name}
+function picked(){const f=document.getElementById('file').files[0];if(!f)return;document.getElementById('dropt').textContent='Ready: '+f.name;
+ const t=document.getElementById('dtitle');if(!t.value)t.placeholder=f.name.replace(/\\.[^.]+$/,'')}
 const drop=document.getElementById('drop');
 ['dragenter','dragover'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('over')}));
 ['dragleave','drop'].forEach(e=>drop.addEventListener(e,()=>drop.classList.remove('over')));
@@ -504,11 +538,14 @@ MANAGE = """
 <div class="auth"><div class="stack" style="width:min(660px,100%)">
  <div class="box dbox">
   <svg class="sprite-big" viewBox="0 0 32 32" style="color:{{ ghost(d.doc_id) }}"><use href="#s-ghost"/></svg>
-  <h2 style="text-align:center">{{ d.filename }}</h2>
-  <div class="stat" style="text-align:center">Owner: you &middot; Downloads used: {{ d.downloads or 0 }}</div>
+  <h2 style="text-align:center">{{ dtitle(d) }}</h2>
+  <div class="stat" style="text-align:center">{{ d.filename }} &middot; Owner: you &middot; Downloads used: {{ d.downloads or 0 }}</div>
+  <div class="actions" style="justify-content:center;margin-top:14px"><a class="btn text" href="/view/{{ d.doc_id }}">Preview</a></div>
   <div class="hp card-hp" style="margin-top:12px" data-start="{{ d.starts_at or d.created_at or 0 }}" data-exp="{{ d.expires_at or 0 }}">
    <span class="hp-label" style="color:#111">TIME</span><div class="hp-bar"><div class="hp-fill"></div></div><div class="hp-text" style="color:#111"></div></div>
   <form method="post">{{ csrf }}<input type="hidden" name="action" value="save">
+   <label class="l">Title</label>
+   <input class="in" name="title" maxlength="120" value="{{ dtitle(d) }}">
    <label class="l">People with access (comma separated; remove a name to revoke)</label>
    <input class="in" name="allowed" value="{{ d.allowed_users|join(', ') }}">
    <label class="l">Change how long it lives (counted from now)</label>
@@ -537,8 +574,30 @@ PASSWORD = """
  <h2 style="text-align:center">Password required</h2>
  <div class="stat" style="text-align:center">{{ filename }}</div>
  <input class="in" type="password" name="password" autofocus required style="margin-top:14px">
- <div class="actions"><a class="btn text" href="/">Cancel</a><button class="btn">Unlock and download</button></div>
+ <div class="actions"><a class="btn text" href="/">Back</a><button class="btn">{{ cta or "Unlock and download" }}</button></div>
 </form></div>
+"""
+
+VIEW = """
+<section class="wrap viewer">
+ <div class="view-head">
+  <div><h2>{{ dtitle(d) }}</h2>
+   <div class="stat">{{ d.filename }} &middot; Owner: {{ 'you' if d.owner == user else d.owner }}</div></div>
+  <div class="actions">
+   <a class="btn text" href="/">Back</a>
+   {% if d.owner == user %}<a class="btn text" href="/manage/{{ d.doc_id }}">Settings</a>{% endif %}
+   <a class="btn" href="/download/{{ d.doc_id }}">Download</a></div>
+ </div>
+ <div class="stage dbox">
+  {% if kind == 'image' %}<img src="/raw/{{ d.doc_id }}" alt="{{ dtitle(d) }}">
+  {% elif kind in ('pdf', 'text') %}<iframe src="/raw/{{ d.doc_id }}" title="{{ dtitle(d) }}"></iframe>
+  {% elif kind == 'video' %}<video src="/raw/{{ d.doc_id }}" controls></video>
+  {% elif kind == 'audio' %}<audio src="/raw/{{ d.doc_id }}" controls></audio>
+  {% else %}<div class="empty"><svg viewBox="0 0 32 32" style="color:{{ ghost(d.doc_id) }}"><use href="#s-ghost"/></svg>
+   <p>No preview for {{ ftype(d.filename) }} files.<br>Download it to open it.</p></div>
+  {% endif %}
+ </div>
+</section>
 """
 
 
@@ -554,6 +613,34 @@ def ftype(name):
 
 def ghost(doc_id):
     return GHOSTS[int(doc_id[:6], 16) % len(GHOSTS)]
+
+
+def dtitle(doc):
+    return doc.get("title") or doc["filename"]
+
+
+# Only these render in the browser. Anything that could run script (html, svg)
+# is shown as plain text so an uploaded file can't attack the site.
+PREVIEW_KINDS = {
+    "image": {"png", "jpg", "jpeg", "gif", "webp", "bmp", "avif"},
+    "pdf": {"pdf"},
+    "video": {"mp4", "webm", "m4v", "mov"},
+    "audio": {"mp3", "wav", "ogg", "m4a", "aac", "flac"},
+    "text": {"txt", "md", "csv", "tsv", "json", "log", "xml", "yaml", "yml", "ini",
+             "py", "js", "css", "html", "htm", "svg", "sql"},
+}
+PREVIEW_SECONDS = 600  # how long one unlocked preview stays viewable
+
+
+def preview_kind(name):
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    return next((k for k, exts in PREVIEW_KINDS.items() if ext in exts), None)
+
+
+def preview_type(name):
+    if preview_kind(name) == "text":
+        return "text/plain; charset=utf-8"
+    return mimetypes.guess_type(name)[0] or "application/octet-stream"
 
 
 CUBE = (
@@ -572,7 +659,7 @@ def cube():
     return Markup(CUBE)
 
 
-app.jinja_env.globals.update(fmt=fmt, ftype=ftype, ghost=ghost, cube=cube)
+app.jinja_env.globals.update(fmt=fmt, ftype=ftype, ghost=ghost, cube=cube, dtitle=dtitle)
 
 
 @app.context_processor
@@ -590,7 +677,7 @@ def csrf_protect():
 
 def page(body_template, **ctx):
     body = render_template_string(body_template, **ctx)
-    return render_template_string(LAYOUT, body=Markup(body))
+    return render_template_string(LAYOUT, body=Markup(body), page_title=ctx.get("page_title"))
 
 
 def me():
@@ -606,29 +693,99 @@ def parse_duration(form):
     if "forever" in form:
         return None
     amount = max(1, int(form.get("amount") or 1))
-    return amount * UNITS[form.get("unit", "hours")]
+    return min(amount * UNITS[form.get("unit", "hours")], MAX_LIFETIME)
+
+
+def can_see(doc, user):
+    """Expiry, sharing and start-time checks. Return '' if allowed, else the reason."""
+    now = int(time.time())
+    if doc.get("expires_at") and now >= doc["expires_at"]:
+        return "This document has expired."
+    if user != doc["owner"]:
+        if user not in doc.get("allowed_users", []):
+            return "You don't have access to this document."
+        if doc.get("starts_at") and now < doc["starts_at"]:
+            return f"Access starts {fmt(doc['starts_at'])}."
+    return ""
 
 
 def check_access(doc, user, password=None):
     """Return (ok, reason). reason == 'password' means a password prompt is needed."""
-    now = int(time.time())
-    if doc.get("expires_at") and now >= doc["expires_at"]:
-        return False, "This document has expired."
-    if user != doc["owner"]:
-        if user not in doc.get("allowed_users", []):
-            return False, "You don't have access to this document."
-        if doc.get("starts_at") and now < doc["starts_at"]:
-            return False, f"Access starts {fmt(doc['starts_at'])}."
+    reason = can_see(doc, user)
+    if reason:
+        return False, reason
     limit = doc.get("max_downloads", 0)
-    if limit and doc.get("downloads", 0) >= limit:
+    if user != doc["owner"] and limit and doc.get("downloads", 0) >= limit:
         return False, "Download limit reached."
-    if doc.get("pw_hash") and not (password and check_password_hash(doc["pw_hash"], password)):
-        return False, "password"
+    if doc.get("pw_hash"):
+        result = password_ok(("doc", doc["doc_id"], user), doc["pw_hash"], password)
+        if result == "locked":
+            return False, "Too many wrong passwords. Try again in a few minutes."
+        if not result:
+            return False, "password"
     return True, ""
 
 
 def parse_users(text):
     return sorted({u.strip().lower() for u in (text or "").split(",") if u.strip()})
+
+
+def parse_title(text):
+    return " ".join((text or "").split())[:120] or None
+
+
+def has_preview(doc_id):
+    return session.get("previews", {}).get(doc_id, 0) > time.time()
+
+
+def grant_preview(doc_id):
+    """Remember an unlocked preview so the file request (and reloads) don't re-prompt or re-count."""
+    now = time.time()
+    grants = {k: v for k, v in session.get("previews", {}).items() if v > now}
+    grants[doc_id] = now + PREVIEW_SECONDS
+    session["previews"] = grants
+
+
+def safe_filename(name):
+    """secure_filename drops non-ASCII names entirely (आधार.pdf -> 'pdf'); keep the extension."""
+    clean = secure_filename(name)
+    ext = name.rsplit(".", 1)[-1] if "." in name else ""
+    ext = secure_filename(ext)
+    if clean and (not ext or clean.lower().endswith("." + ext.lower())):
+        return clean
+    return f"document.{ext}" if ext else "document"
+
+
+# In-memory, so it resets on restart and is per-process; fine for a single server.
+_fails, _fails_lock = {}, threading.Lock()
+
+
+def locked_out(key):
+    with _fails_lock:
+        n, since = _fails.get(key, (0, 0))
+        if since and time.time() - since > LOCK_SECONDS:
+            _fails.pop(key, None)
+            return False
+        return n >= MAX_FAILS
+
+
+def note_fail(key):
+    with _fails_lock:
+        n, since = _fails.get(key, (0, 0))
+        _fails[key] = (n + 1, since or time.time())
+
+
+def password_ok(key, pw_hash, password):
+    """Check a password with lockout. Returns True, False, or 'locked'."""
+    if locked_out(key):
+        return "locked"
+    if password and pw_hash and check_password_hash(pw_hash, password):
+        with _fails_lock:
+            _fails.pop(key, None)
+        return True
+    if password:
+        note_fail(key)
+    return False
 
 
 # ----------------------------------------------------------------- routes --
@@ -649,13 +806,22 @@ def register():
     if request.method == "POST":
         username = request.form["username"].strip().lower()
         password = request.form["password"]
-        if not username or len(password) < 4:
-            flash("Enter a username and a password of at least 4 characters.")
+        try:
+            default_hours = min(max(1, int(request.form.get("default_hours") or 24)), MAX_LIFETIME // 3600)
+        except ValueError:
+            default_hours = None
+        if not USERNAME_RE.match(username):
+            flash("Usernames are 3 to 64 characters: letters, numbers, and . _ @ + - only.")
+        elif len(password) < MIN_PASSWORD:
+            flash(f"Use a password of at least {MIN_PASSWORD} characters.")
+        elif default_hours is None:
+            flash("Default time must be a whole number of hours.")
         elif store.create_user({
             "username": username,
             "pw_hash": generate_password_hash(password),
-            "default_hours": max(1, int(request.form.get("default_hours") or 24)),
+            "default_hours": default_hours,
         }):
+            session.clear()
             session["user"] = username
             flash("You're in. Welcome to CraDocs!", "party")
             return redirect(url_for("index"))
@@ -669,21 +835,29 @@ def register():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        user = store.get_user(request.form["username"].strip().lower())
+        username = request.form["username"].strip().lower()
+        user = store.get_user(username)
         # Accounts without a password hash can't sign in.
-        if user and user.get("pw_hash") and check_password_hash(user["pw_hash"], request.form["password"]):
+        result = password_ok(("login", username), (user or {}).get("pw_hash") or _DUMMY_HASH,
+                             request.form["password"])
+        if result is True and user and user.get("pw_hash"):
+            session.clear()  # drop anything left from a previous user in this browser
             session["user"] = user["username"]
             return redirect(url_for("index"))
-        flash("Invalid username or password.")
+        flash("Too many failed attempts. Try again in a few minutes." if result == "locked"
+              else "Invalid username or password.")
     return page(LOGIN, title="Sign in", subtitle="Share it when you need it. It disappears when you don't.",
                 prompt="Your private vault", register=False,
                 alt_url="/register", alt_text="Create account", cta="Next")
 
 
-@app.route("/logout")
+@app.route("/logout", methods=["GET", "POST"])
 def logout():
-    session.clear()
-    return redirect(url_for("login"))
+    # POST only (with the CSRF token), so another site can't sign you out with a link.
+    if request.method == "POST":
+        session.clear()
+        return redirect(url_for("login"))
+    return redirect(url_for("index"))
 
 
 @app.route("/upload", methods=["POST"])
@@ -714,7 +888,8 @@ def upload():
     doc = {
         "doc_id": uuid.uuid4().hex,
         "owner": me(),
-        "filename": secure_filename(f.filename) or "document",
+        "filename": safe_filename(f.filename),
+        "title": parse_title(request.form.get("title")),
         "allowed_users": parse_users(request.form.get("allowed")),
         "created_at": now,
         "starts_at": starts_at,
@@ -742,17 +917,66 @@ def download(doc_id):
     if not ok and reason == "password":
         if request.method == "POST":
             flash("Wrong password. Try again.")
-        return page(PASSWORD, filename=doc["filename"])
+        return page(PASSWORD, filename=dtitle(doc), page_title=dtitle(doc))
     if not ok:
         flash(reason)
         return redirect(url_for("index"))
-    if not store.claim_download(doc_id):
+    # The limit is for the people it's shared with; the owner's own downloads don't use it up.
+    if doc["owner"] != me() and not store.claim_download(doc_id):
         flash("Download limit reached.")
         return redirect(url_for("index"))
     url = store.download_url(doc_id, doc["filename"])
     if url:
         return redirect(url)
     return send_file(store.local_path(doc_id), as_attachment=True, download_name=doc["filename"])
+
+
+@app.route("/view/<doc_id>", methods=["GET", "POST"])
+def view(doc_id):
+    if need_login():
+        return need_login()
+    doc = store.get_doc(doc_id)
+    if not doc:
+        abort(404)
+    reason = can_see(doc, me())
+    if reason:
+        flash(reason)
+        return redirect(url_for("index"))
+    kind = preview_kind(doc["filename"])
+    if kind and not has_preview(doc_id):
+        ok, reason = check_access(doc, me(), request.form.get("password"))
+        if not ok and reason == "password":
+            if request.method == "POST":
+                flash("Wrong password. Try again.")
+            return page(PASSWORD, filename=dtitle(doc), cta="Unlock and preview", page_title=dtitle(doc))
+        if not ok:
+            flash(reason)
+            return redirect(url_for("index"))
+        # A preview shows the whole file, so it counts toward the download limit
+        # for people it's shared with (but not for the owner).
+        if doc["owner"] != me() and not store.claim_download(doc_id):
+            flash("Download limit reached.")
+            return redirect(url_for("index"))
+        grant_preview(doc_id)
+    return page(VIEW, d=doc, kind=kind, user=me(), page_title=dtitle(doc))
+
+
+@app.route("/raw/<doc_id>")
+def raw(doc_id):
+    """The file itself, shown inline. Only reachable after /view unlocked it."""
+    if need_login():
+        return need_login()
+    doc = store.get_doc(doc_id)
+    if not doc or not preview_kind(doc["filename"]) or not has_preview(doc_id) or can_see(doc, me()):
+        abort(404)
+    ctype = preview_type(doc["filename"])
+    url = store.download_url(doc_id, doc["filename"], inline=True, content_type=ctype)
+    if url:
+        return redirect(url)
+    resp = send_file(store.local_path(doc_id), mimetype=ctype, download_name=doc["filename"])
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Cache-Control"] = "private, no-store"
+    return resp
 
 
 @app.route("/manage/<doc_id>", methods=["GET", "POST"])
@@ -763,15 +987,20 @@ def manage(doc_id):
     if not doc or doc["owner"] != me():
         abort(404)
     if request.method == "POST":
-        if doc.get("pw_hash") and not check_password_hash(doc["pw_hash"], request.form.get("password", "")):
-            flash("Wrong document password.")
-            return redirect(url_for("manage", doc_id=doc_id))
+        if doc.get("pw_hash"):
+            result = password_ok(("doc", doc_id, me()), doc["pw_hash"], request.form.get("password", ""))
+            if result is not True:
+                flash("Too many wrong passwords. Try again in a few minutes." if result == "locked"
+                      else "Wrong document password.")
+                return redirect(url_for("manage", doc_id=doc_id))
         if request.form.get("action") == "delete":
             store.delete_file(doc_id)
             store.delete_doc(doc_id)
             flash("Poof. Document deleted.")
             return redirect(url_for("index"))
         try:
+            if "title" in request.form:
+                doc["title"] = parse_title(request.form["title"])
             doc["allowed_users"] = parse_users(request.form.get("allowed"))
             doc["max_downloads"] = max(0, int(request.form.get("max_dl") or 0))
             if "forever" in request.form:
@@ -789,7 +1018,7 @@ def manage(doc_id):
         _wake.set()
         flash("Saved.")
         return redirect(url_for("manage", doc_id=doc_id))
-    return page(MANAGE, d=doc)
+    return page(MANAGE, d=doc, page_title=dtitle(doc))
 
 
 if __name__ == "__main__":

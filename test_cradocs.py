@@ -26,7 +26,7 @@ def post(client, url, data=None, **kw):
 
 def new_client(name):
     c = cra.app.test_client()
-    post(c, "/register", {"username": name, "password": "secret1"})
+    post(c, "/register", {"username": name, "password": "secret12"})
     return c
 
 
@@ -122,6 +122,89 @@ class VaultTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn(b"Recent documents", r.data)
         self.assertIn(b"f.txt", r.data)
+
+    def test_title_and_preview(self):
+        owner, bob, eve = new_client("own10"), new_client("bob10"), new_client("eve10")
+        doc = upload(owner, title="  My   Notes ", allowed="bob10", max_dl="1")
+        self.assertEqual(doc["title"], "My Notes")
+        self.assertIn(b"My Notes", owner.get("/").data)
+        self.assertEqual(owner.get(f"/raw/{doc['doc_id']}").status_code, 404)  # not unlocked yet
+        r = owner.get(f"/view/{doc['doc_id']}")
+        self.assertIn(b"<title>My Notes", r.data)
+        self.assertIn(b"&larr; Back", r.data)
+        r = owner.get(f"/raw/{doc['doc_id']}")
+        self.assertEqual(r.data, b"data")
+        self.assertTrue(r.headers["Content-Type"].startswith("text/plain"))
+        self.assertTrue(r.headers["Content-Disposition"].startswith("inline"))
+        self.assertEqual(cra.store.get_doc(doc["doc_id"])["downloads"], 0)  # owner previews are free
+        self.assertEqual(bob.get(f"/view/{doc['doc_id']}").status_code, 200)
+        self.assertEqual(bob.get(f"/view/{doc['doc_id']}").status_code, 200)  # reload doesn't re-count
+        self.assertEqual(cra.store.get_doc(doc["doc_id"])["downloads"], 1)
+        self.assertEqual(eve.get(f"/view/{doc['doc_id']}").status_code, 302)
+        self.assertEqual(eve.get(f"/raw/{doc['doc_id']}").status_code, 404)
+        post(owner, f"/manage/{doc['doc_id']}", {"action": "save", "title": "Renamed", "max_dl": "1"})
+        self.assertEqual(cra.store.get_doc(doc["doc_id"])["title"], "Renamed")
+
+    def test_locked_preview_needs_password(self):
+        owner = new_client("own11")
+        doc = upload(owner, password="pw123", file=(io.BytesIO(b"<script>x</script>"), "a.html"))
+        self.assertIn(b"Unlock and preview", owner.get(f"/view/{doc['doc_id']}").data)
+        self.assertEqual(owner.get(f"/raw/{doc['doc_id']}").status_code, 404)
+        post(owner, f"/view/{doc['doc_id']}", {"password": "pw123"})
+        r = owner.get(f"/raw/{doc['doc_id']}")
+        self.assertTrue(r.headers["Content-Type"].startswith("text/plain"))  # html never rendered
+        self.assertEqual(r.headers["X-Content-Type-Options"], "nosniff")
+
+    def test_register_validation(self):
+        c = cra.app.test_client()
+        for data in [{"username": "a,b", "password": "secret12"},     # comma breaks sharing
+                     {"username": "shorty", "password": "short"},     # weak password
+                     {"username": "hrs01", "password": "secret12", "default_hours": "abc"}]:
+            self.assertEqual(post(c, "/register", data).status_code, 200)
+            self.assertIsNone(cra.store.get_user(data["username"]))
+        new_client("dupe1")
+        r = post(cra.app.test_client(), "/register", {"username": "DUPE1", "password": "other123"})
+        self.assertIn(b"taken", r.data)
+
+    def test_login_lockout_and_logout(self):
+        new_client("lock1")
+        c = cra.app.test_client()
+        for _ in range(cra.MAX_FAILS):
+            post(c, "/login", {"username": "lock1", "password": "wrongpass"})
+        r = post(c, "/login", {"username": "lock1", "password": "secret12"}, follow_redirects=True)
+        self.assertIn(b"Too many failed attempts", r.data)  # even the right password is refused
+        cra._fails.clear()
+        self.assertEqual(post(c, "/login", {"username": "lock1", "password": "secret12"}).status_code, 302)
+        self.assertEqual(c.get("/").status_code, 200)
+        c.get("/logout")  # a plain link can't sign you out
+        self.assertEqual(c.get("/").status_code, 200)
+        post(c, "/logout")
+        self.assertEqual(c.get("/").status_code, 302)
+
+    def test_doc_password_lockout(self):
+        owner = new_client("own12")
+        doc = upload(owner, password="pw123")
+        for _ in range(cra.MAX_FAILS):
+            post(owner, f"/download/{doc['doc_id']}", {"password": "bad"})
+        r = post(owner, f"/download/{doc['doc_id']}", {"password": "pw123"}, follow_redirects=True)
+        self.assertIn(b"Too many wrong passwords", r.data)
+        cra._fails.clear()
+
+    def test_owner_not_limited_and_unicode_names(self):
+        owner, bob = new_client("own13"), new_client("bob13")
+        doc = upload(owner, allowed="bob13", max_dl="1",
+                     file=(io.BytesIO(b"data"), "आधार.pdf"))
+        self.assertEqual(doc["filename"], "document.pdf")
+        for _ in range(3):
+            self.assertEqual(owner.get(f"/download/{doc['doc_id']}").status_code, 200)
+        self.assertEqual(bob.get(f"/download/{doc['doc_id']}").status_code, 200)  # owner didn't use it up
+        self.assertEqual(bob.get(f"/download/{doc['doc_id']}").status_code, 302)
+        self.assertEqual(cra.safe_filename("my file (1).PNG"), "my_file_1.PNG")
+
+    def test_lifetime_is_capped(self):
+        owner = new_client("own14")
+        doc = upload(owner, amount="9" * 40, unit="weeks")
+        self.assertEqual(doc["expires_at"] - doc["starts_at"], cra.MAX_LIFETIME)
 
     def test_csrf_blocks_forged_post(self):
         c = cra.app.test_client()
