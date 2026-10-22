@@ -23,26 +23,6 @@ Data is stored in `./data` (db.json + files/). Delete that folder to reset.
 - Expired documents are denied instantly, then physically deleted by the cleanup job
 - CSRF protection, hashed passwords, 10 MB upload cap
 
-## Sign in with Google (optional, free)
-
-The "Continue with Google" button appears only when these are set.
-
-1. https://console.cloud.google.com -> create a project -> APIs & Services ->
-   OAuth consent screen (External; add yourself as a test user).
-2. Credentials -> Create credentials -> OAuth client ID -> Web application.
-3. Authorized redirect URI: `http://localhost:3000/auth/google/callback`
-   (and your real domain's `/auth/google/callback` after deploying).
-4. Start the app with the values:
-
-       $env:GOOGLE_CLIENT_ID="...apps.googleusercontent.com"
-       $env:GOOGLE_CLIENT_SECRET="..."
-       $env:PORT="3000"; python app.py
-
-Open the app at `localhost` (not `127.0.0.1`) so it matches the redirect URI.
-Google users are stored with their verified email as the username, so people
-can share documents with them by email. Usernames with `@` can't be registered
-by password, which stops anyone pre-claiming someone's email.
-
 ## Deploy on AWS (free tier)
 
 Set a zero-spend budget alert first.

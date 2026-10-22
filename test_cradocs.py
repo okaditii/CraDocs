@@ -8,8 +8,6 @@ import unittest
 _tmp = tempfile.mkdtemp()
 os.environ["CRADOCS_DATA"] = _tmp
 os.environ["CRADOCS_MODE"] = "local"
-os.environ["GOOGLE_CLIENT_ID"] = "test-id"
-os.environ["GOOGLE_CLIENT_SECRET"] = "test-secret"
 
 import app as cra  # noqa: E402
 from cleanup import run  # noqa: E402
@@ -123,34 +121,6 @@ class VaultTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn(b"Recent documents", r.data)
         self.assertIn(b"f.txt", r.data)
-
-    def test_google_login_creates_account_and_signs_in(self):
-        from unittest import mock
-        c = cra.app.test_client()
-        self.assertIn(b"Continue with Google", c.get("/login").data)
-        self.assertEqual(c.get("/auth/google").status_code, 302)  # redirects to Google
-        tok = {"userinfo": {"email": "Kid@Gmail.com", "email_verified": True}}
-        with mock.patch.object(cra.oauth.google, "authorize_access_token", return_value=tok):
-            self.assertEqual(c.get("/auth/google/callback").status_code, 302)
-        self.assertEqual(c.get("/").status_code, 200)  # signed in
-        self.assertEqual(cra.store.get_user("kid@gmail.com")["provider"], "google")
-
-    def test_google_unverified_email_rejected(self):
-        from unittest import mock
-        c = cra.app.test_client()
-        tok = {"userinfo": {"email": "x@gmail.com", "email_verified": False}}
-        with mock.patch.object(cra.oauth.google, "authorize_access_token", return_value=tok):
-            c.get("/auth/google/callback")
-        self.assertEqual(c.get("/").status_code, 302)  # bounced to login
-        self.assertIsNone(cra.store.get_user("x@gmail.com"))
-
-    def test_google_accounts_cannot_use_password_login_or_be_preregistered(self):
-        c = cra.app.test_client()
-        cra.store.create_user({"username": "g@gmail.com", "pw_hash": None, "provider": "google"})
-        r = post(c, "/login", {"username": "g@gmail.com", "password": "anything"})
-        self.assertIn(b"Invalid username or password", c.get("/login").data + r.data)
-        post(c, "/register", {"username": "victim@gmail.com", "password": "secret1"})
-        self.assertIsNone(cra.store.get_user("victim@gmail.com"))
 
     def test_csrf_blocks_forged_post(self):
         c = cra.app.test_client()

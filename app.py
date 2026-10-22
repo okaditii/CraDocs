@@ -18,7 +18,6 @@ def _load_dotenv(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "
 
 _load_dotenv()
 
-from authlib.integrations.flask_client import OAuth  # noqa: E402
 from flask import (Flask, abort, flash, redirect, render_template_string,  # noqa: E402
                    request, send_file, session, url_for)
 from markupsafe import Markup  # noqa: E402
@@ -49,18 +48,6 @@ def too_large(_e):
     flash("That file is over the 10 MB limit.")
     return redirect(url_for("index"))
 
-
-# Google sign-in is enabled only when both env vars are set.
-GOOGLE_ENABLED = bool(os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET"))
-oauth = OAuth(app)
-if GOOGLE_ENABLED:
-    oauth.register(
-        name="google",
-        client_id=os.environ["GOOGLE_CLIENT_ID"],
-        client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
-        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-        client_kwargs={"scope": "openid email profile"},
-    )
 
 UNITS = {"minutes": 60, "hours": 3600, "days": 86400, "weeks": 604800}
 GHOSTS = ["#7c3aed", "#ec4899", "#06b6d4", "#f59e0b", "#10b981", "#ef4444"]
@@ -237,11 +224,7 @@ label.l{display:block;font-size:13px;font-weight:600;color:var(--mute);margin:16
 .marquee .chase{display:flex;gap:12px}
 .marquee svg{width:36px;height:36px}
 .press{font-family:var(--px);font-weight:500;font-size:16px;color:var(--mute)}
-.gbtn{display:flex;align-items:center;justify-content:center;gap:12px;border:3px solid var(--ink);border-radius:8px;padding:11px;color:var(--ink);text-decoration:none;
  font-weight:600;font-size:15px;background:#fff;box-shadow:3px 3px 0 var(--ink);margin-top:16px}
-.gbtn:hover{background:var(--yel-l)}.gbtn:active{transform:translate(3px,3px);box-shadow:none}
-.or{display:flex;align-items:center;gap:10px;color:var(--mute);font-size:13px;margin:16px 0 0}
-.or:before,.or:after{content:"";flex:1;border-top:2px solid var(--pur-l)}
 .sprite-big{display:block;margin:0 auto 8px;width:64px;height:64px}
 .stat{font-size:15px;color:var(--mute)}
 /* notifications */
@@ -282,7 +265,6 @@ label.l{color:var(--ink);font-weight:700;font-size:14px}
 .title-screen h1{font-size:clamp(46px,10vw,84px);color:var(--pur);text-shadow:5px 5px 0 var(--yel),10px 10px 0 var(--ink)}
 .press{color:var(--ink);font-weight:600}
 .snack{border-left-width:14px;font-weight:600;font-size:16px}
-.gbtn{border-width:4px;font-size:16px;font-weight:700;box-shadow:0 5px 0 var(--ink)}
 .menu a,.menu button{font-weight:600}
 </style></head><body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -485,13 +467,7 @@ LOGIN = """
  <form class="box dbox" method="post">{{ csrf }}
   <h2>{{ title }}</h2>
   <div class="stat">{{ subtitle }}</div>
-  {% if google %}
-  <a class="gbtn" href="/auth/google">
-   <svg width="20" height="20" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8c4.4-4.1 7.1-10.1 7.1-17.5z"/><path fill="#FBBC05" d="M10.5 28.7a14.5 14.5 0 0 1 0-9.4l-7.9-6.1a24 24 0 0 0 0 21.6l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.1 1.4-4.9 2.3-8.4 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
-   Continue with Google</a>
-  <div class="or"><span>or</span></div>
-  {% endif %}
-  <label class="l">Username</label><input class="in" name="username" required {% if not google %}autofocus{% endif %}>
+  <label class="l">Username</label><input class="in" name="username" required autofocus>
   <label class="l">Password</label><input class="in" type="password" name="password" required>
   {% if register %}<label class="l">Default auto-delete time for your uploads (hours)</label>
   <input class="in" type="number" name="default_hours" value="24" min="1">{% endif %}
@@ -652,8 +628,6 @@ def register():
         password = request.form["password"]
         if not username or len(password) < 4:
             flash("Enter a username and a password of at least 4 characters.")
-        elif "@" in username:  # '@' is reserved for Google accounts (username = verified email)
-            flash("Usernames can't contain '@'. Use 'Continue with Google' for email sign-in.")
         elif store.create_user({
             "username": username,
             "pw_hash": generate_password_hash(password),
@@ -665,7 +639,7 @@ def register():
         else:
             flash("That username is taken.")
     return page(LOGIN, title="Create account", subtitle="Set up your private document vault.",
-                prompt="Your private vault", register=True, google=GOOGLE_ENABLED, alt_url="/login",
+                prompt="Your private vault", register=True, alt_url="/login",
                 alt_text="Sign in instead", cta="Create account")
 
 
@@ -673,42 +647,14 @@ def register():
 def login():
     if request.method == "POST":
         user = store.get_user(request.form["username"].strip().lower())
-        # Google-only accounts have no password hash, so they can't sign in here.
+        # Accounts without a password hash can't sign in.
         if user and user.get("pw_hash") and check_password_hash(user["pw_hash"], request.form["password"]):
             session["user"] = user["username"]
             return redirect(url_for("index"))
         flash("Invalid username or password.")
     return page(LOGIN, title="Sign in", subtitle="Share it when you need it. It disappears when you don't.",
-                prompt="Your private vault", register=False, google=GOOGLE_ENABLED,
+                prompt="Your private vault", register=False,
                 alt_url="/register", alt_text="Create account", cta="Next")
-
-
-@app.route("/auth/google")
-def google_login():
-    if not GOOGLE_ENABLED:
-        abort(404)
-    return oauth.google.authorize_redirect(url_for("google_callback", _external=True))
-
-
-@app.route("/auth/google/callback")
-def google_callback():
-    if not GOOGLE_ENABLED:
-        abort(404)
-    try:
-        token = oauth.google.authorize_access_token()
-    except Exception:
-        flash("Google sign-in was cancelled or failed. Please try again.")
-        return redirect(url_for("login"))
-    info = token.get("userinfo") or {}
-    email = (info.get("email") or "").lower()
-    if not email or not info.get("email_verified"):
-        flash("Your Google email isn't verified.")
-        return redirect(url_for("login"))
-    if not store.get_user(email):
-        store.create_user({"username": email, "pw_hash": None, "default_hours": 24, "provider": "google"})
-        flash("You're in. Welcome to CraDocs!", "party")
-    session["user"] = email
-    return redirect(url_for("index"))
 
 
 @app.route("/logout")

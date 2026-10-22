@@ -16,8 +16,6 @@ os.environ.update({
     "AWS_DEFAULT_REGION": "us-east-1", "CRADOCS_MODE": "aws",
     "CRADOCS_BUCKET": "cradocs-test-bucket", "SECRET_KEY": "test",
 })
-os.environ.pop("GOOGLE_CLIENT_ID", None)
-os.environ.pop("GOOGLE_CLIENT_SECRET", None)
 
 import boto3  # noqa: E402
 from moto import mock_aws  # noqa: E402
