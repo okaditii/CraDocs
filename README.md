@@ -25,7 +25,7 @@ Data is stored in `./data` (db.json + files/). Delete that folder to reset.
 - Important documents: no expiry, password required to open/change/delete
 - Expired documents are denied instantly, then physically deleted by the cleanup job
 - CSRF protection, hashed passwords, 10 MB upload cap
-
+<img width="1896" height="1079" alt="Screenshot 2026-10-22 112559" src="https://github.com/user-attachments/assets/4f82b825-c05d-4efa-a7e0-7e1191be7269" />
 ## Deploy on AWS (free tier)
 
 Set a zero-spend budget alert first.
@@ -47,14 +47,14 @@ Set a zero-spend budget alert first.
 
 3. HTTPS: for anything with real data, put nginx + Let's Encrypt (or a free
    Cloudflare tunnel) in front. Don't send real Aadhaar data over plain HTTP.
-
+<img width="1900" height="1079" alt="Screenshot 2026-10-22 112504" src="https://github.com/user-attachments/assets/d041f320-e16f-4e49-9c63-318cdb0394fd" />
 ## Clean up after your demo
 Delete the CloudFormation stack (empty the S3 bucket first) and terminate the
 EC2 instance, so nothing keeps billing.
 
-![Uploading Screenshot 2026-10-22 112012.png…]()
-<img width="1896" height="1079" alt="Screenshot 2026-10-22 112559" src="https://github.com/user-attachments/assets/4f82b825-c05d-4efa-a7e0-7e1191be7269" />
-<img width="1900" height="1079" alt="Screenshot 2026-10-22 112504" src="https://github.com/user-attachments/assets/d041f320-e16f-4e49-9c63-318cdb0394fd" />
+
+
+
 <img width="1898" height="1079" alt="Screenshot 2026-10-22 112244" src="https://github.com/user-attachments/assets/0d25e531-9ddc-45eb-a7d8-22a8818cd7ad" />
 
 
