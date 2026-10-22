@@ -1,5 +1,8 @@
 # CraDocs: Secure Temporary Document Vault
 
+<img width="1897" height="1079" alt="Screenshot 2026-10-22 112420" src="https://github.com/user-attachments/assets/0642ba42-4226-42bf-ad8b-e68fab6e8d45" />
+
+
 Upload documents, share with specific users, set an access window and download
 limit, and have them auto-deleted. "Important" documents are password-protected
 and never auto-deleted.
@@ -48,3 +51,10 @@ Set a zero-spend budget alert first.
 ## Clean up after your demo
 Delete the CloudFormation stack (empty the S3 bucket first) and terminate the
 EC2 instance, so nothing keeps billing.
+
+![Uploading Screenshot 2026-10-22 112012.png…]()
+<img width="1896" height="1079" alt="Screenshot 2026-10-22 112559" src="https://github.com/user-attachments/assets/4f82b825-c05d-4efa-a7e0-7e1191be7269" />
+<img width="1900" height="1079" alt="Screenshot 2026-10-22 112504" src="https://github.com/user-attachments/assets/d041f320-e16f-4e49-9c63-318cdb0394fd" />
+<img width="1898" height="1079" alt="Screenshot 2026-10-22 112244" src="https://github.com/user-attachments/assets/0d25e531-9ddc-45eb-a7d8-22a8818cd7ad" />
+
+
