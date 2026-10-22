@@ -252,7 +252,7 @@ label.l{display:block;font-size:13px;font-weight:600;color:var(--mute);margin:16
 @keyframes out{to{opacity:0;transform:translate(-50%,16px)}}
 #confetti{position:fixed;inset:0;pointer-events:none;z-index:99}
 @media(max-width:640px){.row{flex-direction:column}.brand span{display:none}}
-/* BOLD: heavier type, solid color blocks, thick borders, hard shadows */
+
 body{font-weight:500;font-size:17px}
 .top{background:var(--pur);border-bottom:5px solid var(--ink);box-shadow:0 5px 0 var(--yel)}
 .brand{color:#fff;font-size:30px}
