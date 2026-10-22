@@ -113,7 +113,7 @@ Resources:
   CleanupSchedule:
     Type: AWS::Events::Rule
     Properties:
-      ScheduleExpression: rate(5 minutes)
+      ScheduleExpression: rate(1 minute)  # backup; the web app deletes on time
       State: ENABLED
       Targets:
         - { Arn: !GetAtt CleanupFunction.Arn, Id: cleanup }

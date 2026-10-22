@@ -29,7 +29,8 @@ Set a zero-spend budget alert first.
 
 1. **One click infra**: CloudFormation -> Create stack -> upload `template.yaml`
    (region of your choice). It creates the private S3 bucket, both DynamoDB
-   tables, the cleanup Lambda, the 5-minute EventBridge schedule and the EC2
+   tables, the cleanup Lambda, the 1-minute EventBridge backup schedule (the running
+   app itself deletes each document the moment it expires) and the EC2
    instance profile. Note the `BucketName` output.
 2. **EC2**: launch a free-tier-eligible `t3.micro`/`t2.micro` (Amazon Linux),
    attach the `InstanceProfile` from the stack, open port 80/8000 in the

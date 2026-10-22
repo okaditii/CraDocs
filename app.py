@@ -1,4 +1,5 @@
 import os
+import threading
 import time
 import uuid
 import calendar
@@ -48,6 +49,26 @@ def too_large(_e):
     flash("That file is over the 10 MB limit.")
     return redirect(url_for("index"))
 
+
+def _sweep_forever():
+    """Delete each document as soon as it expires instead of waiting for the Lambda."""
+    while True:
+        wait = 30
+        try:
+            run_cleanup(store)
+            now = time.time()
+            upcoming = [d["expires_at"] for d in store.list_docs()
+                        if d.get("expires_at") and not d.get("permanent")]
+            wait = min([wait] + [e - now for e in upcoming])
+        except Exception:
+            app.logger.exception("expiry sweep failed")
+        _wake.wait(max(1, wait))
+        _wake.clear()
+
+
+_wake = threading.Event()  # set when a new expiry is saved, so the sweeper re-plans
+if os.environ.get("CRADOCS_SWEEP", "1") == "1":
+    threading.Thread(target=_sweep_forever, daemon=True).start()
 
 UNITS = {"minutes": 60, "hours": 3600, "days": 86400, "weeks": 604800}
 GHOSTS = ["#7c3aed", "#ec4899", "#06b6d4", "#f59e0b", "#10b981", "#ef4444"]
@@ -310,7 +331,9 @@ function hpTick(){const now=Math.floor(Date.now()/1000);document.querySelectorAl
  const e=+el.dataset.exp,st=+el.dataset.start,fill=el.querySelector('.hp-fill'),tx=el.querySelector('.hp-text'),card=el.closest('.card');
  if(!e){fill.style.width='100%';fill.className='hp-fill max';tx.textContent='FOREVER';return}
  const s=e-now,p=Math.max(0,Math.min(1,s/Math.max(1,e-st)));
- if(s<=0){tx.textContent='VANISHED';fill.style.width='0';if(card)card.classList.add('poof');return}
+ if(s<=0){tx.textContent='VANISHED';fill.style.width='0';if(card)card.classList.add('poof');
+  if(el.dataset.alive&&!window.vanishing){window.vanishing=1;setTimeout(()=>location.reload(),1500)}return}
+ el.dataset.alive=1;
  fill.style.width=(p*100)+'%';fill.className='hp-fill '+(p>.5?'ok':p>.2?'mid':'low');
  tx.textContent=fmtLeft(s)+' left';if(card)card.classList.toggle('soon',s<3600)})}
 hpTick();setInterval(hpTick,1000);
@@ -703,6 +726,7 @@ def upload():
     }
     store.save_file(doc["doc_id"], f.stream)
     store.put_doc(doc)
+    _wake.set()
     flash("Nice, document stored. " + ("It stays until you delete it." if forever else "It will vanish when its time is up."), "party")
     return redirect(url_for("index"))
 
@@ -762,6 +786,7 @@ def manage(doc_id):
             flash("Invalid number.")
             return redirect(url_for("manage", doc_id=doc_id))
         store.put_doc(doc)
+        _wake.set()
         flash("Saved.")
         return redirect(url_for("manage", doc_id=doc_id))
     return page(MANAGE, d=doc)

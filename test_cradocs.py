@@ -8,6 +8,7 @@ import unittest
 _tmp = tempfile.mkdtemp()
 os.environ["CRADOCS_DATA"] = _tmp
 os.environ["CRADOCS_MODE"] = "local"
+os.environ["CRADOCS_SWEEP"] = "0"  # tests drive cleanup themselves
 
 import app as cra  # noqa: E402
 from cleanup import run  # noqa: E402

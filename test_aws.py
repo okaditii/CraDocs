@@ -13,7 +13,7 @@ import unittest
 
 os.environ.update({
     "AWS_ACCESS_KEY_ID": "testing", "AWS_SECRET_ACCESS_KEY": "testing",
-    "AWS_DEFAULT_REGION": "us-east-1", "CRADOCS_MODE": "aws",
+    "AWS_DEFAULT_REGION": "us-east-1", "CRADOCS_MODE": "aws", "CRADOCS_SWEEP": "0",
     "CRADOCS_BUCKET": "cradocs-test-bucket", "SECRET_KEY": "test",
 })
 
