@@ -1,6 +1,7 @@
 """Storage backends. LocalStore needs nothing; AwsStore uses S3 + DynamoDB."""
 import json
 import os
+import tempfile
 import threading
 from decimal import Decimal
 from pathlib import Path
@@ -191,4 +192,7 @@ class AwsStore:
 def get_store():
     if os.environ.get("CRADOCS_MODE", "local") == "aws":
         return AwsStore()
-    return LocalStore(os.environ.get("CRADOCS_DATA", "data"))
+    # Vercel's filesystem is read-only except the temp dir, so local mode keeps its data there.
+    # That data is per-instance and wiped on redeploy; set CRADOCS_MODE=aws for storage that lasts.
+    default = os.path.join(tempfile.gettempdir(), "cradocs") if os.environ.get("VERCEL") else "data"
+    return LocalStore(os.environ.get("CRADOCS_DATA", default))

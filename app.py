@@ -69,7 +69,8 @@ def _sweep_forever():
 
 
 _wake = threading.Event()  # set when a new expiry is saved, so the sweeper re-plans
-if os.environ.get("CRADOCS_SWEEP", "1") == "1":
+# Serverless (Vercel) freezes the process between requests, so a background sweeper can't run there.
+if os.environ.get("CRADOCS_SWEEP", "0" if os.environ.get("VERCEL") else "1") == "1":
     threading.Thread(target=_sweep_forever, daemon=True).start()
 
 UNITS = {"minutes": 60, "hours": 3600, "days": 86400, "weeks": 604800}
